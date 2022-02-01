@@ -38,29 +38,38 @@ export default class MagicWeb3Connector extends AbstractWeb3Connector {
     if (!Magic) {
       throw new Error('Cannot enable via MagicLink: dependency "magic-sdk" is missing');
     }
+    if (window.magicInstance && window.magicEther) {
+      const { magicInstance, magicEther } = window;
+      const isUserloggedIn = await magicInstance.user.isLoggedIn();
+      if (isUserloggedIn) {
+        const signer = magicEther.getSigner();
+        const { chainId } = await magicEther.getNetwork();
+        const address = (await signer.getAddress()).toLowerCase();
+        // Assign Constants
+        this.account = address;
+        this.provider = magicEther.provider;
+        this.chainId = `0x${chainId.toString(16)}`;
+        // Assign magic user for deactivation
+        this.magicUser = magicInstance;
+        this.subscribeToEvents(this.provider);
+        return {
+          provider: this.provider,
+          account: this.account,
+          chainId: this.chainId,
+        };
+      }
+    }
 
-    // This allows consumer externally logic with magic, i.e. using social/phone login with magic
-    if (window?.Magic) {
-      const { Magic } = window;
-      const loggedIn = await Magic.user.isLoggedIn();
-      if (loggedIn) {
-        magic = Magic;
-        ether = new ethers.providers.Web3Provider(magic.rpcProvider);
-      }
-    } else {
-      try {
-        magic = new Magic(apiKey, {
-          network: network,
-        });
-        ether = new ethers.providers.Web3Provider(magic.rpcProvider);
-        await magic.auth.loginWithMagicLink({
-          email: email,
-        });
-      } catch (err) {
-        throw new Error(
-          'Error during enable via MagicLink, please double check network and apikey'
-        );
-      }
+    try {
+      magic = new Magic(apiKey, {
+        network: network,
+      });
+      ether = new ethers.providers.Web3Provider(magic.rpcProvider);
+      await magic.auth.loginWithMagicLink({
+        email: email,
+      });
+    } catch (err) {
+      throw new Error('Error during enable via MagicLink, please double check network and apikey');
     }
 
     const loggedIn = await magic.user.isLoggedIn();

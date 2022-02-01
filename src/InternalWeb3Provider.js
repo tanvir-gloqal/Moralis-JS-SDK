@@ -39,7 +39,7 @@ class InternalWeb3Provider extends EventEmitter {
       throw new Error('Cannot acticate InternalWeb3Provider without a connector');
     }
 
-    const { provider, chainId, account } = await this.connector.activate(options);
+    const { provider, chainId, account, ether } = await this.connector.activate(options);
 
     this.provider = provider;
     this.chainId = chainId;
