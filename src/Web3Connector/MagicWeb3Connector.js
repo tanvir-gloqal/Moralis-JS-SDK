@@ -39,16 +39,27 @@ export default class MagicWeb3Connector extends AbstractWeb3Connector {
       throw new Error('Cannot enable via MagicLink: dependency "magic-sdk" is missing');
     }
 
-    try {
-      magic = new Magic(apiKey, {
-        network: network,
-      });
-      ether = new ethers.providers.Web3Provider(magic.rpcProvider);
-      await magic.auth.loginWithMagicLink({
-        email: email,
-      });
-    } catch (err) {
-      throw new Error('Error during enable via MagicLink, please double check network and apikey');
+    // This allows consumer externally logic with magic, i.e. using social/phone login with magic
+    if (window?.Magic) {
+      const { Magic } = window;
+      const loggedIn = await Magic.user.isLoggedIn();
+      if (loggedIn) {
+        magic = Magic;
+      }
+    } else {
+      try {
+        magic = new Magic(apiKey, {
+          network: network,
+        });
+        ether = new ethers.providers.Web3Provider(magic.rpcProvider);
+        await magic.auth.loginWithMagicLink({
+          email: email,
+        });
+      } catch (err) {
+        throw new Error(
+          'Error during enable via MagicLink, please double check network and apikey'
+        );
+      }
     }
 
     const loggedIn = await magic.user.isLoggedIn();
