@@ -45,6 +45,7 @@ export default class MagicWeb3Connector extends AbstractWeb3Connector {
       const loggedIn = await Magic.user.isLoggedIn();
       if (loggedIn) {
         magic = Magic;
+        ether = new ethers.providers.Web3Provider(magic.rpcProvider);
       }
     } else {
       try {
