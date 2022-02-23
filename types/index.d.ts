@@ -331,7 +331,13 @@ export namespace Moralis {
     type: 'WalletConnect';
   }
 
-  type Web3ProviderType = 'metamask' | 'walletconnect' | 'walletConnect' | 'wc' | 'magicLink';
+  type Web3ProviderType =
+    | 'metamask'
+    | 'walletconnect'
+    | 'walletConnect'
+    | 'wc'
+    | 'magicLink'
+    | 'web3Auth';
   type AuthenticationType = 'evm' | 'dot' | 'polkadot' | 'kusama' | 'erd' | 'elrond' | 'sol';
   type Web3Provider = MoralisWalletConnectProvider | MoralisInjectedProvider;
   interface AuthenticationOptions {
@@ -340,8 +346,12 @@ export namespace Moralis {
     type?: AuthenticationType;
     chainId?: number;
     signingMessage?: string;
+    anyNetwork?: boolean;
   }
-  type EnableOptions = Pick<AuthenticationOptions, 'provider' | 'chainId'>;
+  type EnableOptions = Pick<
+    AuthenticationOptions,
+    'provider' | 'connector' | 'chainId' | 'anyNetwork'
+  >;
   type LinkOptions = Object.SaveOptions;
 
   type EthChain = 'eth' | 'mainnet' | '0x1';
@@ -546,7 +556,7 @@ export namespace Moralis {
   class Units {
     static ETH: (value: number | string) => string;
     static Token: (value: number | string, decimals?: number) => string;
-    static FromWei: (value: number | string, decimals?: number) => number;
+    static FromWei: (value: number | string, decimals?: number) => string;
   }
 
   /**
