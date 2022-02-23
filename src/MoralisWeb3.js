@@ -18,6 +18,7 @@ import ParseError from './ParseError';
 import InternalWeb3Provider, { InternalWeb3Events } from './InternalWeb3Provider';
 import detectEthereumProvider from '@metamask/detect-provider';
 import MagicWeb3Connector from './Web3Connector/MagicWeb3Connector';
+import { Web3Auth } from './Web3Connector/Web3AuthConnector';
 
 const MoralisEmitter = new EventEmitter();
 
@@ -65,7 +66,7 @@ class MoralisWeb3 {
   }
 
   static handleWeb3ChainChanged(chainId) {
-    this.web3 = this.internalWeb3Provider.web3;
+    this.web3 = this.internalWeb3Provider?.web3;
     MoralisEmitter.emit(InternalWeb3Events.CHAIN_CHANGED, chainId);
   }
 
@@ -74,6 +75,9 @@ class MoralisWeb3 {
   }
 
   static handleWeb3Disconnect(error) {
+    if (error?.message === 'MetaMask: Disconnected from chain. Attempting to connect.') {
+      return;
+    }
     this.cleanup();
     MoralisEmitter.emit(InternalWeb3Events.PROVIDER_DISCONNECT, error);
   }
@@ -84,6 +88,7 @@ class MoralisWeb3 {
         'Cannot execute Moralis.enableWeb3(), as Moralis Moralis.enableWeb3() already has been called, but is not finished yet '
       );
     }
+
     try {
       this.isEnablingWeb3 = true;
 
@@ -92,14 +97,12 @@ class MoralisWeb3 {
         options.provider = 'network';
       }
 
-      if (this.internalWeb3Provider) {
-        await this.cleanup();
-      }
-
       const Connector = options?.connector ?? MoralisWeb3.getWeb3Connector(options?.provider);
       const connector = new Connector(options);
 
-      this.internalWeb3Provider = new InternalWeb3Provider(connector);
+      const anyNetwork = options?.anyNetwork === true ? true : false;
+
+      this.internalWeb3Provider = new InternalWeb3Provider(connector, anyNetwork);
 
       this.internalWeb3Provider.on(InternalWeb3Events.ACCOUNT_CHANGED, args =>
         this.handleWeb3AccountChanged(args)
@@ -193,6 +196,8 @@ class MoralisWeb3 {
         return NetworkWeb3Connector;
       case 'magicLink':
         return MagicWeb3Connector;
+      case 'web3Auth':
+        return Web3Auth;
       default:
         return InjectedWeb3Connector;
     }
@@ -202,7 +207,14 @@ class MoralisWeb3 {
     return this.cleanup();
   }
 
+  /**
+   * Cleanup previously established provider
+   */
   static async cleanup() {
+    if (this.isEnablingWeb3) {
+      return;
+    }
+
     if (this.web3 && this.internalWeb3Provider) {
       MoralisEmitter.emit(InternalWeb3Events.WEB3_DEACTIVATED, {
         connector: this.internalWeb3Provider.connector,
@@ -228,7 +240,12 @@ class MoralisWeb3 {
         this.handleWeb3Disconnect
       );
 
-      await this.internalWeb3Provider.deactivate();
+      // For example, if walletconnect has been enabled, then later on metamask, then wc is not the internalProvider, but still has an active connection
+      try {
+        await this.internalWeb3Provider.deactivate();
+      } catch (error) {
+        // Do nothing
+      }
     }
 
     this.internalWeb3Provider = null;
@@ -240,8 +257,6 @@ class MoralisWeb3 {
     if (isLoggedIn) {
       await ParseUser.logOut();
     }
-
-    await this.cleanup();
 
     if (MoralisWeb3.isDotAuth(options)) {
       return MoralisDot.authenticate(options);
@@ -281,7 +296,7 @@ class MoralisWeb3 {
 
   static async link(account, options) {
     const { signer } = this.getInternalWeb3Provider();
-    const data = options?.signingMessage || MoralisWeb3.getSigningData();
+    const message = options?.signingMessage || MoralisWeb3.getSigningData();
     const user = await ParseUser.currentAsync();
     const ethAddress = account.toLowerCase();
 
@@ -289,6 +304,7 @@ class MoralisWeb3 {
     const query = new ParseQuery(EthAddress);
     const ethAddressRecord = await query.get(ethAddress).catch(() => null);
     if (!ethAddressRecord) {
+      const data = await createSigningData(message);
       const signature = await signer.signMessage(data);
 
       if (!signature) throw new Error('Data not signed');
@@ -665,9 +681,64 @@ class MoralisWeb3 {
       signerOrProvider,
     } = this.getInternalWeb3Provider();
 
-    const functionData = abi.find(x => x.name === functionName);
+    // Check if function is an overloaded function definition. ex "getMessage(string)", or "getMessage()"
+    const overloadedFunction = functionName.match(/^(.+)\((.*)\)$/);
 
-    if (!functionData) throw new Error('Function does not exist in abi');
+    let functionData;
+    if (overloadedFunction) {
+      // Get functiondata from overloaded function
+      const nameWithoutTopics = overloadedFunction[1];
+      const topics = overloadedFunction[2]
+        .split(',')
+        .map(topic => topic.trim())
+        .filter(topic => !!topic);
+
+      const functionDataArray = abi.filter(x => x.name === nameWithoutTopics);
+
+      if (functionDataArray.length === 0) {
+        throw new Error('Function does not exist in abi');
+      }
+
+      functionData = functionDataArray.find(data => {
+        return (
+          (data?.inputs.length ?? 0) === topics.length &&
+          data.inputs.every((input, index) => input.type === topics[index])
+        );
+      });
+
+      if (!functionData) {
+        const possibleTopics = functionDataArray.map(
+          data => `${data.name}(${data.inputs.map(input => input.type).join(',')})`
+        );
+
+        throw new Error(
+          `Function with the provided topic does not exist in abi. Possible funcationNames: ${possibleTopics.join(
+            ' ,'
+          )}`
+        );
+      }
+    } else {
+      // Get functiondata from 'normal' function
+      const functionDataArray = abi.filter(x => x.name === functionName);
+
+      if (functionDataArray.length === 0) {
+        throw new Error('Function does not exist in abi');
+      }
+
+      if (functionDataArray.length > 1) {
+        const possibleTopics = functionDataArray.map(
+          data => `${data.name}(${data.inputs.map(input => input.type).join(',')})`
+        );
+
+        throw new Error(
+          `Multiple function definitions found in the abi. Please include the topic in the functionName. Possible funcationNames: ${possibleTopics.join(
+            ' ,'
+          )}`
+        );
+      }
+
+      functionData = functionDataArray[0];
+    }
 
     const stateMutability = functionData?.stateMutability;
 
@@ -700,7 +771,13 @@ class MoralisWeb3 {
 
     const contract = new ethers.Contract(contractAddress, abi, signerOrProvider);
 
-    const response = await contract[functionName](
+    const contractMethod = contract[functionName];
+
+    if (!contractMethod) {
+      throw new Error(`Cannot find function "${functionName}" on the contract`);
+    }
+
+    const response = await contractMethod(
       ...Object.values(parsedInputs),
       msgValue ? { value: ethers.BigNumber.from(`${msgValue}`) } : {}
     );
